@@ -323,13 +323,38 @@ class Handler(BaseHTTPRequestHandler):
                     "destination": destination or "Not exposed by this link type",
                     "eapol_type": eapol_type or "Unknown",
                 })
+        # Passive 802.11 management-frame counters. Windows pktmon may not expose
+        # raw Wi-Fi headers; zero counts can mean the link type did not include them.
+        management = {"deauth_frames": 0, "disassoc_frames": 0, "beacon_frames": 0, "probe_response_frames": 0}
+        management_filter = "wlan.fc.type_subtype == 0x000c || wlan.fc.type_subtype == 0x000a || wlan.fc.type_subtype == 0x0008 || wlan.fc.type_subtype == 0x0005"
+        try:
+            mgmt_result = subprocess.run(
+                [tshark, "-r", path, "-Y", management_filter, "-T", "fields", "-e", "wlan.fc.type_subtype"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if mgmt_result.returncode == 0:
+                for value in mgmt_result.stdout.splitlines():
+                    subtype = value.strip().lower()
+                    if subtype in ("0x000c", "12"):
+                        management["deauth_frames"] += 1
+                    elif subtype in ("0x000a", "10"):
+                        management["disassoc_frames"] += 1
+                    elif subtype in ("0x0008", "8"):
+                        management["beacon_frames"] += 1
+                    elif subtype in ("0x0005", "5"):
+                        management["probe_response_frames"] += 1
+        except subprocess.TimeoutExpired:
+            pass
         self.send_json(200, {
             "filename": name,
             "eapol_frames": len(result.stdout.splitlines()),
             "eapol_key_frames": key_frames,
             "frames": frames,
             "truncated": len(result.stdout.splitlines()) > 200,
-            "message": "EAPOL frame summary only. Key frames are not proof of a complete four-way handshake; no packet payloads or passwords were extracted."
+            **management,
+            "management_visibility": "802.11 management frames are visible only when the capture link type includes Wi-Fi headers; Windows pktmon may expose only Ethernet/network-stack traffic.",
+            "message": "Passive metadata summary only. Deauthentication/disassociation counts are indicators for review, not proof of an attack. EAPOL-Key counts do not prove a complete handshake. No payloads, keys, or passwords were extracted."
         })
 
     def list_capture_archive(self):
