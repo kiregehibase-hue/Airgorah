@@ -56,18 +56,20 @@ The password endpoint is served only by the loopback helper and accepts requests
 The strength tester runs in the browser and does not send the typed value to the helper. Its score is a simple educational heuristic, not a password-cracking-time estimate.
 
 
-## Passive packet capture (Windows 10/11)
+## Built-in packet capture (Windows 10/11)
 
-Airgorah includes an optional local passive packet-capture panel. It uses Wireshark's `dumpcap` utility with Npcap to capture packets visible to one interface selected by the user. It does not inject packets, disconnect devices, perform monitor-mode attacks, or extract credentials or packet payloads.
+Airgorah now uses Windows Packet Monitor (`pktmon`), an in-box Windows packet-capture utility. The capture workflow does not require Npcap, Wireshark, or `dumpcap`. Windows writes a temporary ETL capture, and Airgorah converts it to PCAPNG when you stop the session.
 
-### Install the capture dependencies
+### Use packet capture
 
-1. Install Npcap from the official page: https://npcap.com/#download
-2. Install Wireshark for Windows from https://www.wireshark.org/download.html. The Wireshark installer includes `dumpcap.exe`; keep the Npcap component enabled if the installer offers it.
-3. Restart Windows if requested.
-4. Start Airgorah with `start-local.bat`. Keep the local helper and Vite terminal windows open.
-5. Open `http://127.0.0.1:5173`, then scroll to **Passive Packet Capture**.
-6. Choose **Detect interfaces**, select only an interface and traffic you own or are explicitly authorized to monitor, and choose **Start capture**.
-7. Choose **Stop capture** to finalize the PCAPNG file. The file is saved in the repository's local `captures` folder; use **Download PCAPNG** to save a copy through the local app.
+1. Download and extract the repository on the Windows 10/11 computer.
+2. Run `start-local.bat` and keep the local helper and Vite terminal windows open.
+3. If Windows reports that capture needs elevation, close Airgorah and run `start-local.bat` using **Run as administrator**, then approve the UAC prompt.
+4. Open `http://127.0.0.1:5173` and scroll to **Passive Packet Capture**.
+5. Choose **Detect interfaces**. The built-in engine captures at Windows physical network-adapter components.
+6. Choose **Start capture**, generate the traffic you want to diagnose on your own PC or an authorized network, then choose **Stop capture**.
+7. Airgorah converts the ETL log to a PCAPNG file in the local `captures` folder. Download it from the capture panel or open it with a PCAPNG-compatible analyzer.
 
-Each capture automatically stops after 100 MB or one hour to limit disk usage. The capture API binds only to `127.0.0.1:8765` and accepts capture controls only from the local development app. The capture panel is unavailable on the hosted GitHub Pages site because browsers cannot access local Npcap interfaces remotely. Capture files may contain private network metadata or content; protect and delete them when no longer needed. Packet counts are reported after dumpcap finalizes the capture; while capturing, the panel shows elapsed time and file growth.
+The capture buffer is limited to 100 MB in circular mode; it overwrites the oldest buffered data when full. Stop the capture to finalize the PCAPNG file. The local API binds only to `127.0.0.1:8765` and capture controls are restricted to local app origins. GitHub Pages cannot access the local Windows packet-capture service.
+
+**Limitations:** This is Windows network-stack capture, not 802.11 monitor mode. It records packets visible at the selected Windows network-stack capture points; it does not collect nearby devices' over-the-air Wi-Fi frames or guarantee visibility into every device's traffic. It is not a replacement for a monitor-mode adapter, router capture, or managed switch mirror. Captures may contain private network metadata or content; store and share them carefully. Packet count display after conversion requires Wireshark's optional `tshark` command-line utility.
