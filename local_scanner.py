@@ -10,6 +10,8 @@ import json
 import re
 import subprocess
 import sys
+import ctypes
+import time
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -30,6 +32,49 @@ def classify_security(authentication: str, encryption: str) -> str:
     if "wep" in value:
         return "WEP"
     return "Open"
+
+def request_windows_wifi_scan():
+    """Ask Windows WLAN AutoConfig to perform a fresh passive scan."""
+    if sys.platform != "win32":
+        return
+    class GUID(ctypes.Structure):
+        _fields_ = [
+            ("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+            ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8),
+        ]
+    class WLAN_INTERFACE_INFO(ctypes.Structure):
+        _fields_ = [("InterfaceGuid", GUID), ("strInterfaceDescription", ctypes.c_wchar * 256), ("isState", ctypes.c_int)]
+    class WLAN_INTERFACE_INFO_LIST(ctypes.Structure):
+        _fields_ = [("dwNumberOfItems", ctypes.c_uint32), ("dwIndex", ctypes.c_uint32), ("InterfaceInfo", WLAN_INTERFACE_INFO * 1)]
+
+    wlan = ctypes.WinDLL("wlanapi.dll")
+    handle = ctypes.c_void_p()
+    negotiated = ctypes.c_uint32()
+    result = wlan.WlanOpenHandle(2, None, ctypes.byref(negotiated), ctypes.byref(handle))
+    if result != 0:
+        raise RuntimeError(f"Windows WLAN service could not open a scan handle (error {result}).")
+    listing = ctypes.c_void_p()
+    try:
+        result = wlan.WlanEnumInterfaces(handle, None, ctypes.byref(listing))
+        if result != 0:
+            raise RuntimeError(f"Could not enumerate wireless adapters (error {result}).")
+        header = ctypes.cast(listing, ctypes.POINTER(WLAN_INTERFACE_INFO_LIST)).contents
+        if header.dwNumberOfItems == 0:
+            raise RuntimeError("Windows reports no Wi-Fi adapter. Enable Wi-Fi or connect a wireless adapter.")
+        base = ctypes.addressof(listing.contents) + WLAN_INTERFACE_INFO_LIST.InterfaceInfo.offset
+        requested = 0
+        for index in range(header.dwNumberOfItems):
+            item = ctypes.cast(base + index * ctypes.sizeof(WLAN_INTERFACE_INFO), ctypes.POINTER(WLAN_INTERFACE_INFO)).contents
+            status = wlan.WlanScan(handle, ctypes.byref(item.InterfaceGuid), None, None, None)
+            if status == 0:
+                requested += 1
+        if requested == 0:
+            raise RuntimeError("Windows could not start a Wi-Fi scan. Check that the WLAN AutoConfig service is running.")
+    finally:
+        if listing:
+            wlan.WlanFreeMemory(listing)
+        wlan.WlanCloseHandle(handle, None)
+    time.sleep(3)
 
 def scan_networks():
     if sys.platform != "win32":
