@@ -12,6 +12,11 @@ import subprocess
 import sys
 import ctypes
 import time
+import base64
+import binascii
+import os
+import shutil
+import tempfile
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -221,15 +226,82 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_json(500, {"error": str(exc)})
 
+
+    def audit_one_handshake_candidate(self, length):
+        """Verify exactly one user-supplied candidate against a local capture."""
+        if length < 1 or length > 30 * 1024 * 1024:
+            self.send_json(400, {"error": "Request too large. Capture files must be 20 MB or smaller."})
+            return
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if not isinstance(payload, dict):
+            self.send_json(400, {"error": "Invalid audit request."})
+            return
+        filename, candidate, encoded = payload.get("filename", ""), payload.get("candidate", ""), payload.get("capture_base64", "")
+        bssid = payload.get("bssid", "")
+        if not isinstance(filename, str) or os.path.splitext(filename.lower())[1] not in (".cap", ".pcap", ".pcapng"):
+            self.send_json(400, {"error": "Choose a .cap, .pcap, or .pcapng capture file."})
+            return
+        if not isinstance(candidate, str) or not (8 <= len(candidate.encode("utf-8")) <= 63 or re.fullmatch(r"[0-9a-fA-F]{64}", candidate)):
+            self.send_json(400, {"error": "Enter one WPA passphrase (8–63 UTF-8 bytes) or a 64-character hexadecimal key."})
+            return
+        if not isinstance(encoded, str) or not encoded:
+            self.send_json(400, {"error": "The capture file is empty or unreadable."})
+            return
+        if bssid and (not isinstance(bssid, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", bssid)):
+            self.send_json(400, {"error": "BSSID must use the format AA:BB:CC:DD:EE:FF."})
+            return
+        aircrack = shutil.which("aircrack-ng")
+        if not aircrack:
+            self.send_json(503, {"error": "Aircrack-ng was not found. Install it on this Windows PC, add aircrack-ng.exe to PATH, then restart start-local.bat."})
+            return
+        try:
+            capture = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            self.send_json(400, {"error": "The uploaded capture data is not valid Base64."})
+            return
+        if not capture or len(capture) > 20 * 1024 * 1024:
+            self.send_json(400, {"error": "Capture file must be between 1 byte and 20 MB."})
+            return
+        with tempfile.TemporaryDirectory(prefix="airgorah-audit-") as temp_dir:
+            capture_path = os.path.join(temp_dir, "capture" + os.path.splitext(filename.lower())[1])
+            candidate_path = os.path.join(temp_dir, "candidate.txt")
+            with open(capture_path, "wb") as handle:
+                handle.write(capture)
+            with open(candidate_path, "w", encoding="utf-8", newline="") as handle:
+                handle.write(candidate + "\\n")
+            command = [aircrack, "-a", "2"]
+            if bssid:
+                command.extend(["-b", bssid])
+            command.extend(["-w", candidate_path, capture_path])
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            except subprocess.TimeoutExpired:
+                self.send_json(504, {"status": "timeout", "message": "Audit timed out. Check that the capture is valid and contains the relevant WPA handshake."})
+                return
+            output = (result.stdout or "") + "\\n" + (result.stderr or "")
+            upper = output.upper()
+            if "KEY FOUND!" in upper:
+                self.send_json(200, {"status": "match", "message": "PASSWORD MATCH: this candidate matches the WPA handshake in the selected capture."})
+            elif "NO VALID WPA HANDSHAKES" in upper or "NO WPA HANDSHAKE" in upper:
+                self.send_json(200, {"status": "invalid_capture", "message": "No usable WPA handshake was found for this target. This is not a password mismatch."})
+            elif "KEY NOT FOUND" in upper or "PASSphrase NOT IN DICTIONARY".upper() in upper:
+                self.send_json(200, {"status": "no_match", "message": "PASSWORD DOES NOT MATCH: the tested candidate did not match this handshake."})
+            else:
+                detail = output.strip().splitlines()[-1] if output.strip() else "Aircrack-ng returned no diagnostic output."
+                self.send_json(422, {"status": "indeterminate", "message": "Could not verify the candidate. Check the capture format, handshake, target BSSID, and Aircrack-ng installation. " + detail[:200]})
+
     def do_POST(self):
-        if self.path != "/api/saved-profile-password":
+        if self.path not in ("/api/saved-profile-password", "/api/handshake-audit"):
             self.send_json(404, {"error": "Not found"})
             return
         if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
-            self.send_json(403, {"error": "Password recovery is allowed only from the local Airgorah app."})
+            self.send_json(403, {"error": "This local security audit is available only from the local Airgorah app."})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if self.path == "/api/handshake-audit":
+                self.audit_one_handshake_candidate(length)
+                return
             if length < 1 or length > 4096:
                 self.send_json(400, {"error": "Invalid request size."})
                 return
