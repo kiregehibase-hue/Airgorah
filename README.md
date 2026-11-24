@@ -54,3 +54,20 @@ For this feature, run both the local scanner helper and the web app on the same 
 The password endpoint is served only by the loopback helper and accepts requests from the local development origins. Password values are returned only when explicitly requested and are not written to a file or log. The hosted GitHub Pages site cannot access saved Windows profiles; use the local app.
 
 The strength tester runs in the browser and does not send the typed value to the helper. Its score is a simple educational heuristic, not a password-cracking-time estimate.
+
+
+## Passive packet capture (Windows 10/11)
+
+Airgorah includes an optional local passive packet-capture panel. It uses Wireshark's `dumpcap` utility with Npcap to capture packets visible to one interface selected by the user. It does not inject packets, disconnect devices, perform monitor-mode attacks, or extract credentials or packet payloads.
+
+### Install the capture dependencies
+
+1. Install Npcap from the official page: https://npcap.com/#download
+2. Install Wireshark for Windows from https://www.wireshark.org/download.html. The Wireshark installer includes `dumpcap.exe`; keep the Npcap component enabled if the installer offers it.
+3. Restart Windows if requested.
+4. Start Airgorah with `start-local.bat`. Keep the local helper and Vite terminal windows open.
+5. Open `http://127.0.0.1:5173`, then scroll to **Passive Packet Capture**.
+6. Choose **Detect interfaces**, select only an interface and traffic you own or are explicitly authorized to monitor, and choose **Start capture**.
+7. Choose **Stop capture** to finalize the PCAPNG file. The file is saved in the repository's local `captures` folder; use **Download PCAPNG** to save a copy through the local app.
+
+The capture API binds only to `127.0.0.1:8765` and accepts capture controls only from the local development app. The capture panel is unavailable on the hosted GitHub Pages site because browsers cannot access local Npcap interfaces remotely. Capture files may contain private network metadata or content; protect and delete them when no longer needed. Packet counts are reported after dumpcap finalizes the capture; while capturing, the panel shows elapsed time and file growth.
