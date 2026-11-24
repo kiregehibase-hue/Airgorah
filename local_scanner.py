@@ -251,12 +251,12 @@ def scan_networks():
 class Handler(BaseHTTPRequestHandler):
     def add_cors_headers(self):
         origin = self.headers.get("Origin", "")
-        is_saved_profile_route = self.path.startswith("/api/saved-")
-        allowed = SAVED_PROFILE_ORIGINS if is_saved_profile_route else ALLOWED_ORIGINS
+        is_local_only_route = self.path.startswith(("/api/saved-", "/api/capture/"))
+        allowed = SAVED_PROFILE_ORIGINS if is_local_only_route else ALLOWED_ORIGINS
         if origin in allowed:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
-        methods = "GET, POST, OPTIONS" if is_saved_profile_route else "GET, OPTIONS"
+        methods = "GET, POST, OPTIONS" if is_local_only_route else "GET, OPTIONS"
         self.send_header("Access-Control-Allow-Methods", methods)
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Allow-Private-Network", "true")
@@ -327,12 +327,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": "That interface is no longer available. Refresh the interface list."})
                 return
             with CAPTURE_LOCK:
+                _capture_snapshot_locked()
                 current = CAPTURE_STATE.get("process")
                 if current is not None and current.poll() is None:
                     self.send_json(409, {"error": "A packet capture is already running. Stop it before starting another."})
                     return
                 os.makedirs(CAPTURE_DIR, exist_ok=True)
-                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 filename = "airgorah_capture_" + stamp + ".pcapng"
                 file_path = os.path.join(CAPTURE_DIR, filename)
                 log_path = os.path.join(CAPTURE_DIR, filename + ".log")
@@ -412,7 +413,7 @@ class Handler(BaseHTTPRequestHandler):
         query = urllib.parse.urlparse(self.path).query
         params = urllib.parse.parse_qs(query)
         name = params.get("name", [""])[0]
-        if not re.fullmatch(r"airgorah_capture_[0-9]{8}_[0-9]{6}\.pcapng", name):
+        if not re.fullmatch(r"airgorah_capture_[0-9]{8}_[0-9]{6}_[0-9]{6}\.pcapng", name):
             self.send_json(400, {"error": "Invalid capture filename."})
             return
         path = os.path.join(CAPTURE_DIR, name)
