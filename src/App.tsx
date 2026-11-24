@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import PasswordSecurityLab from './PasswordSecurityLab';
 
 // ============ ICONS ============
 const Icons = {
@@ -190,6 +191,7 @@ function Navigation() {
     { label: 'Features', href: '#features' },
     { label: 'Scanner', href: '#scanner' },
     { label: 'Attack Lab', href: '#attack' },
+    { label: 'Password Lab', href: '#password-lab' },
     { label: 'Architecture', href: '#architecture' },
     { label: 'Build', href: '#build' },
     { label: 'CI/CD', href: '#pipeline' },
@@ -2116,6 +2118,7 @@ export default function App() {
           setScanning={setScanning}
         />
         <AttackLab networks={networks} />
+        <PasswordSecurityLab />
         <Architecture />
         <DockerBuild />
         <Pipeline />
