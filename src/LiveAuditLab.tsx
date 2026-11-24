@@ -60,6 +60,26 @@ export default function LiveAuditLab() {
 
   const highRisk = networks.filter(n => ['OPEN', 'WEP'].some(v => (n.security || '').toUpperCase().includes(v))).length;
   const weak = networks.filter(n => (n.security || '').toUpperCase() === 'WPA').length;
+  const ssidGroups = networks.reduce<Record<string, Network[]>>((groups, network) => {
+    const key = (network.ssid || '').trim();
+    if (key && key !== '(Hidden network)') (groups[key] ||= []).push(network);
+    return groups;
+  }, {});
+  const repeatedSsids = Object.entries(ssidGroups).filter(([, aps]) => new Set(aps.map(ap => ap.bssid)).size > 1);
+  const exportReport = () => {
+    const report = {
+      application: 'Airgorah', generated_at: new Date().toISOString(), scanned_at: scannedAt,
+      scope: 'Nearby access points advertised to this Windows adapter; passive/read-only',
+      summary: { access_points: networks.length, open_or_wep: highRisk, legacy_wpa: weak, repeated_ssid_groups: repeatedSsids.length },
+      observations: repeatedSsids.map(([ssid, aps]) => ({ ssid, bssids: aps.map(ap => ap.bssid), note: 'Multiple BSSIDs advertise this SSID. This can be normal multi-AP roaming; verify against your known AP inventory.' })),
+      access_points: networks
+    };
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = 'airgorah-wifi-audit.json'; link.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <section id="live-audit" className="py-20 px-6">
@@ -76,9 +96,12 @@ export default function LiveAuditLab() {
               <h3 className="text-white font-semibold">Local network assessment</h3>
               <p className="text-xs text-gray-500 mt-1">Uses the existing loopback-only Airgorah scanner API</p>
             </div>
-            <button onClick={runAudit} disabled={busy} className="px-5 py-3 rounded-lg bg-emerald-500/15 border border-emerald-400/30 text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-50 text-sm font-semibold">
-              {busy ? 'Scanning…' : 'Run live security audit'}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {networks.length > 0 && <button onClick={exportReport} className="px-4 py-3 rounded-lg bg-white/5 border border-white/10 text-gray-200 hover:bg-white/10 text-sm">Export JSON report</button>}
+              <button onClick={runAudit} disabled={busy} className="px-5 py-3 rounded-lg bg-emerald-500/15 border border-emerald-400/30 text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-50 text-sm font-semibold">
+                {busy ? 'Scanning…' : 'Run live security audit'}
+              </button>
+            </div>
           </div>
 
           <div className="rounded-xl bg-black/30 border border-white/5 p-4 mb-5">
@@ -94,6 +117,11 @@ export default function LiveAuditLab() {
               <div className="rounded-xl bg-black/30 border border-amber-400/10 p-4"><p className="text-xs text-gray-500">Legacy WPA</p><p className="text-2xl text-amber-200 font-semibold">{weak}</p></div>
             </div>
 
+            {repeatedSsids.length > 0 && <div className="rounded-xl bg-amber-500/5 border border-amber-400/20 p-4 mb-5">
+              <p className="text-sm text-amber-100 font-semibold">Repeated SSID observations · {repeatedSsids.length}</p>
+              <p className="text-xs text-gray-400 mt-1">The same network name is advertised by multiple BSSIDs. This is common in mesh and multi-access-point networks and is not proof of an evil twin. Compare BSSIDs with your trusted access-point inventory.</p>
+              <ul className="mt-2 space-y-1">{repeatedSsids.map(([ssid, aps]) => <li key={ssid} className="text-xs text-gray-300"><span className="font-semibold">{ssid}</span> · {aps.length} BSSIDs</li>)}</ul>
+            </div>}
             <div className="space-y-3">
               {networks.map((network, index) => {
                 const result = assess(network.security);
