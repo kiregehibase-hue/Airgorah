@@ -49,8 +49,8 @@ def find_dumpcap():
     if executable:
         return executable
     candidates = [
-        os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"), "Wireshark", "dumpcap.exe"),
-        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"), "Wireshark", "dumpcap.exe"),
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Wireshark", "dumpcap.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Wireshark", "dumpcap.exe"),
     ]
     return next((path for path in candidates if os.path.isfile(path)), None)
 
@@ -68,7 +68,7 @@ def list_capture_interfaces():
         raise RuntimeError(detail[:350])
     interfaces = []
     for line in result.stdout.splitlines():
-        match = re.match(r"^\\s*(\\d+)\\.\\s+(.+?)\\s*$", line)
+        match = re.match(r"^\s*(\d+)\.\s+(.+?)\s*$", line)
         if match:
             interfaces.append({"id": match.group(1), "name": match.group(2)})
     if not interfaces:
@@ -79,7 +79,7 @@ def _capture_packet_count(log_path):
     try:
         with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
             output = handle.read()
-        matches = re.findall(r"Packets: captured (\\d+)", output, re.I)
+        matches = re.findall(r"Packets: captured (\d+)", output, re.I)
         return int(matches[-1]) if matches else None
     except OSError:
         return None
@@ -318,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             interface_id = payload.get("interface_id") if isinstance(payload, dict) else None
-            if not isinstance(interface_id, str) or not re.fullmatch(r"\\d{1,3}", interface_id):
+            if not isinstance(interface_id, str) or not re.fullmatch(r"\d{1,3}", interface_id):
                 self.send_json(400, {"error": "Select a valid capture interface."})
                 return
             interfaces = list_capture_interfaces()
@@ -412,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
         query = urllib.parse.urlparse(self.path).query
         params = urllib.parse.parse_qs(query)
         name = params.get("name", [""])[0]
-        if not re.fullmatch(r"airgorah_capture_[0-9]{8}_[0-9]{6}\\.pcapng", name):
+        if not re.fullmatch(r"airgorah_capture_[0-9]{8}_[0-9]{6}\.pcapng", name):
             self.send_json(400, {"error": "Invalid capture filename."})
             return
         path = os.path.join(CAPTURE_DIR, name)
