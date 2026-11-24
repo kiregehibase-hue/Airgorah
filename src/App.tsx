@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PasswordSecurityLab from './PasswordSecurityLab';
 import CaptureLab from './CaptureLab';
+import LiveAuditLab from './LiveAuditLab';
 
 // ============ ICONS ============
 const Icons = {
@@ -1133,12 +1134,12 @@ function AttackLab({ networks }: { networks: WiFiNetwork[] }) {
           viewport={{ once: true }}
           className="text-center mb-12"
         >
-          <div className="inline-block text-xs font-mono uppercase tracking-widest text-red-400 mb-3">Offensive Security</div>
+          <div className="inline-block text-xs font-mono uppercase tracking-widest text-red-400 mb-3">Security Simulation · no transmissions</div>
           <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">
             Attack Lab
           </h2>
           <p className="text-gray-400 max-w-2xl mx-auto">
-            Execute WiFi security audits with professional-grade attacks. Test your network's resilience against real-world threats.
+            This panel is an educational simulation only. For real measurements, use the Live Wi-Fi Security Audit and Passive Packet Capture panels below.
           </p>
         </motion.div>
 
@@ -2121,6 +2122,7 @@ export default function App() {
         />
         <CaptureLab />
         <AttackLab networks={networks} />
+        <LiveAuditLab />
         <PasswordSecurityLab />
         <Architecture />
         <DockerBuild />
