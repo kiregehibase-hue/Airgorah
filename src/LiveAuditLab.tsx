@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 
 type Network = {
@@ -35,10 +35,11 @@ export default function LiveAuditLab() {
   const [networks, setNetworks] = useState<Network[]>([]);
   const [scannedAt, setScannedAt] = useState('');
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('Run a live scan to assess nearby access points.');
+  const [message, setMessage] = useState('Live monitoring starts automatically. Windows WLAN refreshes the nearby access-point list every 15 seconds.');
   const [error, setError] = useState('');
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const runAudit = async () => {
+  const runAudit = useCallback(async () => {
     setBusy(true);
     setError('');
     setMessage('Scanning nearby Wi-Fi networks using Windows WLAN…');
@@ -56,7 +57,14 @@ export default function LiveAuditLab() {
     } finally {
       setBusy(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    void runAudit();
+    const timer = window.setInterval(() => { void runAudit(); }, 15000);
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, runAudit]);
 
   const highRisk = networks.filter(n => ['OPEN', 'WEP'].some(v => (n.security || '').toUpperCase().includes(v))).length;
   const weak = networks.filter(n => (n.security || '').toUpperCase() === 'WPA').length;
@@ -87,7 +95,7 @@ export default function LiveAuditLab() {
         <motion.div initial={{ opacity: 0, y: 18 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-10">
           <div className="inline-block text-xs font-mono uppercase tracking-widest text-emerald-300 mb-3">Live · Read-only · Windows WLAN</div>
           <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Live Wi-Fi Security Audit</h2>
-          <p className="text-gray-400 max-w-2xl mx-auto">Assess real nearby access points reported by your Windows Wi-Fi adapter. This checks advertised security and radio details; it does not attempt to connect to or attack networks.</p>
+          <p className="text-gray-400 max-w-2xl mx-auto">Assess real nearby access points reported by your Windows Wi-Fi adapter. Updates from your real Windows WLAN adapter every 15 seconds; no network connection attempts or attack traffic are sent.</p>
         </motion.div>
 
         <div className="rounded-2xl bg-[#0d0d15] border border-emerald-400/15 p-6">
@@ -96,7 +104,11 @@ export default function LiveAuditLab() {
               <h3 className="text-white font-semibold">Local network assessment</h3>
               <p className="text-xs text-gray-500 mt-1">Uses the existing loopback-only Airgorah scanner API</p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-xs text-gray-300">
+                <input type="checkbox" checked={autoRefresh} onChange={event => setAutoRefresh(event.target.checked)} className="accent-emerald-400" />
+                Auto-refresh every 15 seconds
+              </label>
               {networks.length > 0 && <button onClick={exportReport} className="px-4 py-3 rounded-lg bg-white/5 border border-white/10 text-gray-200 hover:bg-white/10 text-sm">Export JSON report</button>}
               <button onClick={runAudit} disabled={busy} className="px-5 py-3 rounded-lg bg-emerald-500/15 border border-emerald-400/30 text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-50 text-sm font-semibold">
                 {busy ? 'Scanning…' : 'Run live security audit'}
