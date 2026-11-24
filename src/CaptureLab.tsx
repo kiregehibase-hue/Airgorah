@@ -21,6 +21,8 @@ export default function CaptureLab() {
   const [status, setStatus] = useState<CaptureStatus>({});
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [analysis, setAnalysis] = useState<{ eapol_frames: number; eapol_key_frames: number; message?: string; error?: string } | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -54,6 +56,27 @@ export default function CaptureLab() {
     const timer = window.setInterval(() => { void refresh(); }, 2000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  const analyzeCapture = async () => {
+    if (!status.filename || status.running) return;
+    setAnalyzing(true);
+    setAnalysis(null);
+    try {
+      const response = await fetch(API + '/api/capture/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: status.filename }),
+        cache: 'no-store',
+      });
+      const data = await response.json() as { eapol_frames?: number; eapol_key_frames?: number; message?: string; error?: string };
+      if (!response.ok) throw new Error(data.error || 'Capture analysis failed.');
+      setAnalysis({ eapol_frames: data.eapol_frames || 0, eapol_key_frames: data.eapol_key_frames || 0, message: data.message });
+    } catch (error) {
+      setAnalysis({ eapol_frames: 0, eapol_key_frames: 0, error: error instanceof Error ? error.message : 'Capture analysis failed.' });
+    } finally {
+      setAnalyzing(false);
+    }
+  };
 
   const startCapture = async () => {
     if (!selected) return;
@@ -142,6 +165,24 @@ export default function CaptureLab() {
             <div className="mt-4 p-4 rounded-xl bg-emerald-500/5 border border-emerald-400/20 flex flex-wrap items-center justify-between gap-3">
               <div><div className="text-xs text-emerald-300 mb-1">Saved capture</div><code className="text-sm text-gray-200 break-all">{status.filename}</code></div>
               {!status.running && <a href={API + '/api/capture/download?name=' + encodeURIComponent(status.filename)} className="px-4 py-2 rounded-lg bg-emerald-500/15 border border-emerald-400/20 text-emerald-200 text-sm">Download PCAPNG</a>}
+            </div>
+          )}
+          {status.filename && !status.running && (
+            <div className="mt-4">
+              <button onClick={analyzeCapture} disabled={analyzing} className="px-4 py-2 rounded-lg bg-cyan-500/10 border border-cyan-400/20 text-cyan-200 text-sm disabled:opacity-50">
+                {analyzing ? 'Analyzing EAPOL frames…' : 'Analyze handshake traffic'}
+              </button>
+              {analysis && (
+                <div className="mt-3 rounded-xl bg-black/30 border border-white/5 p-4 text-sm">
+                  {analysis.error ? <p className="text-amber-200">{analysis.error}</p> : <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><div className="text-xs text-gray-500">EAPOL frames</div><div className="text-xl text-white font-semibold">{analysis.eapol_frames}</div></div>
+                      <div><div className="text-xs text-gray-500">EAPOL-Key frames</div><div className="text-xl text-white font-semibold">{analysis.eapol_key_frames}</div></div>
+                    </div>
+                    <p className="mt-3 text-xs text-gray-400">{analysis.message}</p>
+                  </>}
+                </div>
+              )}
             </div>
           )}
           {message && <p className="mt-4 text-sm text-gray-300 break-words" role="status">{message}</p>}
