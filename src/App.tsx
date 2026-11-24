@@ -686,10 +686,10 @@ function WiFiScanner({ networks, setNetworks, scanning, setScanning }: {
               <button
                 onClick={realScanning ? stopScan : startRealScan}
                 className="px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 hover:bg-cyan-500/20"
-                title="Scan nearby Wi-Fi networks using the local Windows scanner service"
+                title="Start a real nearby Wi-Fi scan using the local Windows scanner service"
               >
                 <div className="w-4 h-4"><Icons.Radar /></div>
-                {realScanning ? 'Stop Real Scan' : 'Real Scan'}
+                {realScanning ? 'Stop Real Scan' : 'Start Real Scan'}
               </button>
               <button
                 onClick={scanning && !realScanning ? stopScan : startScan}
@@ -702,7 +702,7 @@ function WiFiScanner({ networks, setNetworks, scanning, setScanning }: {
                 <div className="w-4 h-4">
                   {scanning ? <Icons.Close /> : <Icons.Radar />}
                 </div>
-                {scanning ? 'Stop Scan' : 'Start Scan'}
+                {scanning ? 'Stop Demo' : 'Demo Scan'}
               </button>
               {networks.length > 0 && (
                 <button
@@ -800,7 +800,7 @@ function WiFiScanner({ networks, setNetworks, scanning, setScanning }: {
                         {scanning ? 'Searching for networks...' : 'No networks discovered'}
                       </div>
                       <div className="text-gray-600 text-xs">
-                        {scanning ? 'This may take a moment' : 'Click "Start Scan" to begin'}
+                        {scanning ? 'This may take a moment' : 'Choose Start Real Scan for nearby Wi-Fi networks, or Demo Scan for simulated results'}
                       </div>
                     </div>
                   ) : (
