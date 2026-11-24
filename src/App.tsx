@@ -194,6 +194,7 @@ function Navigation() {
     { label: 'Scanner', href: '#scanner' },
     { label: 'Packet Capture', href: '#capture' },
     { label: 'Attack Lab', href: '#attack' },
+    { label: 'Live Wi-Fi Audit', href: '#live-audit' },
     { label: 'Password Lab', href: '#password-lab' },
     { label: 'Architecture', href: '#architecture' },
     { label: 'Build', href: '#build' },
