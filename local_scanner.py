@@ -17,6 +17,9 @@ import binascii
 import os
 import shutil
 import tempfile
+import threading
+import signal
+import urllib.parse
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -30,6 +33,95 @@ SAVED_PROFILE_ORIGINS = {
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 }
+
+
+CAPTURE_LOCK = threading.Lock()
+CAPTURE_STATE = {
+    "process": None, "log_handle": None, "started_at": None,
+    "file_path": None, "filename": None, "interface_name": None,
+    "packet_count": None, "elapsed_seconds": 0,
+}
+CAPTURE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "captures")
+
+def find_dumpcap():
+    """Find Wireshark's legitimate passive capture utility."""
+    executable = shutil.which("dumpcap")
+    if executable:
+        return executable
+    candidates = [
+        os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"), "Wireshark", "dumpcap.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"), "Wireshark", "dumpcap.exe"),
+    ]
+    return next((path for path in candidates if os.path.isfile(path)), None)
+
+def list_capture_interfaces():
+    dumpcap = find_dumpcap()
+    if not dumpcap:
+        raise RuntimeError("Wireshark dumpcap was not found. Install Wireshark and Npcap, then restart Airgorah.")
+    result = subprocess.run(
+        [dumpcap, "-D"], capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=15,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "Could not enumerate capture interfaces.").strip()
+        raise RuntimeError(detail[:350])
+    interfaces = []
+    for line in result.stdout.splitlines():
+        match = re.match(r"^\\s*(\\d+)\\.\\s+(.+?)\\s*$", line)
+        if match:
+            interfaces.append({"id": match.group(1), "name": match.group(2)})
+    if not interfaces:
+        raise RuntimeError("No capture interfaces were found. Check that Npcap is installed and an adapter is enabled.")
+    return interfaces
+
+def _capture_packet_count(log_path):
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+            output = handle.read()
+        matches = re.findall(r"Packets: captured (\\d+)", output, re.I)
+        return int(matches[-1]) if matches else None
+    except OSError:
+        return None
+
+def _capture_snapshot_locked():
+    process = CAPTURE_STATE["process"]
+    started = CAPTURE_STATE["started_at"]
+    running = process is not None and process.poll() is None
+    if process is not None and not running:
+        log_handle = CAPTURE_STATE.get("log_handle")
+        if log_handle:
+            try:
+                log_handle.flush()
+                log_handle.close()
+            except OSError:
+                pass
+        log_path = CAPTURE_STATE.get("log_path")
+        CAPTURE_STATE["packet_count"] = _capture_packet_count(log_path) if log_path else None
+        if log_path:
+            try:
+                os.remove(log_path)
+            except OSError:
+                pass
+        CAPTURE_STATE["process"] = None
+        CAPTURE_STATE["log_handle"] = None
+        CAPTURE_STATE["log_path"] = None
+    elapsed = max(0, int(time.time() - started)) if started else CAPTURE_STATE.get("elapsed_seconds", 0)
+    CAPTURE_STATE["elapsed_seconds"] = elapsed
+    file_path = CAPTURE_STATE.get("file_path")
+    try:
+        file_bytes = os.path.getsize(file_path) if file_path and os.path.isfile(file_path) else 0
+    except OSError:
+        file_bytes = 0
+    return {
+        "available": bool(find_dumpcap()),
+        "running": running,
+        "interface_name": CAPTURE_STATE.get("interface_name"),
+        "filename": CAPTURE_STATE.get("filename"),
+        "elapsed_seconds": elapsed,
+        "file_bytes": file_bytes,
+        "packet_count": CAPTURE_STATE.get("packet_count"),
+    }
 
 def classify_security(authentication: str, encryption: str) -> str:
     value = (authentication + " " + encryption).lower()
@@ -201,9 +293,167 @@ class Handler(BaseHTTPRequestHandler):
                     profiles.append(name)
         return profiles
 
+
+    def capture_interfaces(self):
+        try:
+            self.send_json(200, {"interfaces": list_capture_interfaces()})
+        except Exception as exc:
+            self.send_json(503, {"error": str(exc)})
+
+    def capture_status(self):
+        try:
+            with CAPTURE_LOCK:
+                payload = _capture_snapshot_locked()
+            if not payload["available"]:
+                payload["error"] = "Wireshark dumpcap was not found. Install Wireshark and Npcap on this PC."
+            self.send_json(200, payload)
+        except Exception as exc:
+            self.send_json(500, {"error": str(exc)})
+
+    def start_capture(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 1 or length > 4096:
+                self.send_json(400, {"error": "Invalid capture start request."})
+                return
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            interface_id = payload.get("interface_id") if isinstance(payload, dict) else None
+            if not isinstance(interface_id, str) or not re.fullmatch(r"\\d{1,3}", interface_id):
+                self.send_json(400, {"error": "Select a valid capture interface."})
+                return
+            interfaces = list_capture_interfaces()
+            selected = next((item for item in interfaces if item["id"] == interface_id), None)
+            if not selected:
+                self.send_json(400, {"error": "That interface is no longer available. Refresh the interface list."})
+                return
+            with CAPTURE_LOCK:
+                current = CAPTURE_STATE.get("process")
+                if current is not None and current.poll() is None:
+                    self.send_json(409, {"error": "A packet capture is already running. Stop it before starting another."})
+                    return
+                os.makedirs(CAPTURE_DIR, exist_ok=True)
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = "airgorah_capture_" + stamp + ".pcapng"
+                file_path = os.path.join(CAPTURE_DIR, filename)
+                log_path = os.path.join(CAPTURE_DIR, filename + ".log")
+                dumpcap = find_dumpcap()
+                if not dumpcap:
+                    self.send_json(503, {"error": "Wireshark dumpcap was not found. Install Wireshark and Npcap."})
+                    return
+                log_handle = open(log_path, "w+b")
+                flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                try:
+                    process = subprocess.Popen(
+                        [dumpcap, "-i", interface_id, "-w", file_path, "-q"],
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=log_handle, creationflags=flags,
+                    )
+                    time.sleep(0.4)
+                    if process.poll() is not None:
+                        log_handle.flush()
+                        log_handle.close()
+                        detail = ""
+                        try:
+                            with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+                                detail = handle.read()[-500:]
+                        except OSError:
+                            pass
+                        try:
+                            os.remove(log_path)
+                        except OSError:
+                            pass
+                        self.send_json(503, {"error": "Capture process could not start. " + detail.strip()})
+                        return
+                except Exception:
+                    log_handle.close()
+                    raise
+                CAPTURE_STATE.update({
+                    "process": process, "log_handle": log_handle, "log_path": log_path,
+                    "started_at": time.time(), "file_path": file_path,
+                    "filename": filename, "interface_name": selected["name"],
+                    "packet_count": None, "elapsed_seconds": 0,
+                })
+                result = _capture_snapshot_locked()
+            result["message"] = "Passive capture started on " + selected["name"] + "."
+            self.send_json(200, result)
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json(400, {"error": "Invalid JSON capture request."})
+        except Exception as exc:
+            self.send_json(500, {"error": str(exc)[:350]})
+
+    def stop_capture(self):
+        try:
+            with CAPTURE_LOCK:
+                process = CAPTURE_STATE.get("process")
+                if process is None:
+                    result = _capture_snapshot_locked()
+                    result["message"] = "No capture is currently running."
+                    self.send_json(200, result)
+                    return
+                if process.poll() is None:
+                    try:
+                        process.send_signal(signal.CTRL_BREAK_EVENT)
+                        process.wait(timeout=8)
+                    except Exception:
+                        if process.poll() is None:
+                            process.terminate()
+                            try:
+                                process.wait(timeout=5)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait(timeout=3)
+                result = _capture_snapshot_locked()
+                result["message"] = "Capture stopped. The PCAPNG file is saved locally."
+            self.send_json(200, result)
+        except Exception as exc:
+            self.send_json(500, {"error": str(exc)[:350]})
+
+    def download_capture(self):
+        query = urllib.parse.urlparse(self.path).query
+        params = urllib.parse.parse_qs(query)
+        name = params.get("name", [""])[0]
+        if not re.fullmatch(r"airgorah_capture_[0-9]{8}_[0-9]{6}\\.pcapng", name):
+            self.send_json(400, {"error": "Invalid capture filename."})
+            return
+        path = os.path.join(CAPTURE_DIR, name)
+        if not os.path.isfile(path):
+            self.send_json(404, {"error": "Capture file not found."})
+            return
+        try:
+            size = os.path.getsize(path)
+            with open(path, "rb") as handle:
+                data = handle.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.tcpdump.pcap")
+            self.send_header("Content-Disposition", 'attachment; filename="' + name + '"')
+            self.send_header("Content-Length", str(size))
+            self.add_cors_headers()
+            self.end_headers()
+            self.wfile.write(data)
+        except OSError as exc:
+            self.send_json(500, {"error": str(exc)[:250]})
+
     def do_GET(self):
         if self.path == "/health":
             self.send_json(200, {"ok": True, "service": "Airgorah local Wi-Fi scanner"})
+            return
+        if self.path == "/api/capture/interfaces":
+            if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
+                self.send_json(403, {"error": "Capture controls are available only from the local Airgorah app."})
+                return
+            self.capture_interfaces()
+            return
+        if self.path == "/api/capture/status":
+            if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
+                self.send_json(403, {"error": "Capture status is available only from the local Airgorah app."})
+                return
+            self.capture_status()
+            return
+        if self.path.startswith("/api/capture/download?"):
+            if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
+                self.send_json(403, {"error": "Capture downloads are available only from the local Airgorah app."})
+                return
+            self.download_capture()
             return
         if self.path == "/api/saved-profiles":
             if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
@@ -291,6 +541,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(422, {"status": "indeterminate", "message": "Could not verify the candidate. Check the capture format, handshake, target BSSID, and Aircrack-ng installation. " + detail[:200]})
 
     def do_POST(self):
+        if self.path in ("/api/capture/start", "/api/capture/stop"):
+            if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
+                self.send_json(403, {"error": "Capture controls are available only from the local Airgorah app."})
+                return
+            if self.path == "/api/capture/start":
+                self.start_capture()
+            else:
+                self.stop_capture()
+            return
         if self.path not in ("/api/saved-profile-password", "/api/handshake-audit"):
             self.send_json(404, {"error": "Not found"})
             return
