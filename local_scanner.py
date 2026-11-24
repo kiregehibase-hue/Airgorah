@@ -345,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
                 flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                 try:
                     process = subprocess.Popen(
-                        [dumpcap, "-i", interface_id, "-w", file_path],
+                        [dumpcap, "-i", interface_id, "-w", file_path, "-a", "filesize:102400", "-a", "duration:3600"],
                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                         stderr=log_handle, creationflags=flags,
                     )
@@ -422,15 +422,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             size = os.path.getsize(path)
-            with open(path, "rb") as handle:
-                data = handle.read()
             self.send_response(200)
-            self.send_header("Content-Type", "application/vnd.tcpdump.pcap")
+            self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Disposition", 'attachment; filename="' + name + '"')
             self.send_header("Content-Length", str(size))
             self.add_cors_headers()
             self.end_headers()
-            self.wfile.write(data)
+            with open(path, "rb") as handle:
+                while True:
+                    chunk = handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
         except OSError as exc:
             self.send_json(500, {"error": str(exc)[:250]})
 
