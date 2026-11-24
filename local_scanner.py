@@ -20,6 +20,11 @@ ALLOWED_ORIGINS = {
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 }
+# Credential-recovery routes are intentionally restricted to the local app.
+SAVED_PROFILE_ORIGINS = {
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+}
 
 def classify_security(authentication: str, encryption: str) -> str:
     value = (authentication + " " + encryption).lower()
@@ -149,10 +154,13 @@ def scan_networks():
 class Handler(BaseHTTPRequestHandler):
     def add_cors_headers(self):
         origin = self.headers.get("Origin", "")
-        if origin in ALLOWED_ORIGINS:
+        is_saved_profile_route = self.path.startswith("/api/saved-")
+        allowed = SAVED_PROFILE_ORIGINS if is_saved_profile_route else ALLOWED_ORIGINS
+        if origin in allowed:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        methods = "GET, POST, OPTIONS" if is_saved_profile_route else "GET, OPTIONS"
+        self.send_header("Access-Control-Allow-Methods", methods)
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Cache-Control", "no-store")
@@ -171,9 +179,35 @@ class Handler(BaseHTTPRequestHandler):
         self.add_cors_headers()
         self.end_headers()
 
+    def list_saved_wifi_profiles(self):
+        result = subprocess.run(
+            ["netsh", "wlan", "show", "profiles"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0:
+            raise RuntimeError((result.stderr or result.stdout or "Could not list saved Wi-Fi profiles").strip()[:300])
+        profiles = []
+        for line in result.stdout.splitlines():
+            match = re.search(r"All User Profile\\s*:\\s*(.*)$", line, re.I)
+            if match:
+                name = match.group(1).strip()
+                if name and name not in profiles:
+                    profiles.append(name)
+        return profiles
+
     def do_GET(self):
         if self.path == "/health":
             self.send_json(200, {"ok": True, "service": "Airgorah local Wi-Fi scanner"})
+            return
+        if self.path == "/api/saved-profiles":
+            if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
+                self.send_json(403, {"error": "Saved profile access is available only from the local Airgorah app."})
+                return
+            try:
+                self.send_json(200, {"profiles": self.list_saved_wifi_profiles()})
+            except Exception as exc:
+                self.send_json(500, {"error": str(exc)})
             return
         if self.path != "/api/scan":
             self.send_json(404, {"error": "Not found"})
@@ -186,6 +220,47 @@ class Handler(BaseHTTPRequestHandler):
             })
         except Exception as exc:
             self.send_json(500, {"error": str(exc)})
+
+    def do_POST(self):
+        if self.path != "/api/saved-profile-password":
+            self.send_json(404, {"error": "Not found"})
+            return
+        if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
+            self.send_json(403, {"error": "Password recovery is allowed only from the local Airgorah app."})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 1 or length > 4096:
+                self.send_json(400, {"error": "Invalid request size."})
+                return
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            profile = payload.get("profile") if isinstance(payload, dict) else None
+            if not isinstance(profile, str) or not profile.strip():
+                self.send_json(400, {"error": "Select a saved Wi-Fi profile."})
+                return
+            # Only accept a profile name returned by Windows for this account.
+            if profile not in self.list_saved_wifi_profiles():
+                self.send_json(404, {"error": "That profile is not saved under this Windows account."})
+                return
+            result = subprocess.run(
+                ["netsh", "wlan", "show", "profile", f"name={profile}", "key=clear"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode != 0:
+                self.send_json(500, {"error": (result.stderr or result.stdout or "Windows could not read this profile").strip()[:300]})
+                return
+            password = None
+            for line in result.stdout.splitlines():
+                match = re.search(r"Key Content\\s*:\\s*(.*)$", line, re.I)
+                if match:
+                    password = match.group(1).strip()
+                    break
+            self.send_json(200, {"profile": profile, "password": password})
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json(400, {"error": "Invalid JSON request."})
+        except Exception as exc:
+            self.send_json(500, {"error": str(exc)[:300]})
 
     def log_message(self, fmt, *args):
         print("[Airgorah] " + (fmt % args))
