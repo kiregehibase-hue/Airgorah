@@ -567,33 +567,68 @@ function WiFiScanner({ networks, setNetworks, scanning, setScanning }: {
   const [secFilter, setSecFilter] = useState<'all' | WiFiNetwork['security']>('all');
   const [sortBy, setSortBy] = useState<'signal' | 'ssid' | 'channel'>('signal');
   const scanInterval = useRef<number | null>(null);
+  const [realScanning, setRealScanning] = useState(false);
+  const [scannerError, setScannerError] = useState('');
+  const [lastRealScan, setLastRealScan] = useState('');
+
+  const stopScan = () => {
+    setScanning(false);
+    setRealScanning(false);
+    if (scanInterval.current !== null) {
+      window.clearInterval(scanInterval.current);
+      scanInterval.current = null;
+    }
+  };
 
   const startScan = () => {
-    if (scanInterval.current !== null) window.clearInterval(scanInterval.current);
+    stopScan();
+    setScannerError('');
+    setNetworks(() => Array.from({ length: 6 }, () => generateNetwork()));
     setScanning(true);
-    setNetworks(() => []);
-    const initial = Array.from({ length: 6 }, () => generateNetwork());
-    setNetworks(() => initial);
     scanInterval.current = window.setInterval(() => {
       setNetworks(prev => {
-        const newNet = generateNetwork();
         const updated = prev.map(n => ({
           ...n,
           signal: Math.max(10, Math.min(95, n.signal + Math.floor(Math.random() * 10) - 5))
         }));
-        if (updated.length < 15 && Math.random() > 0.3) {
-          return [...updated, newNet];
-        }
-        return updated;
+        return updated.length < 15 && Math.random() > 0.3 ? [...updated, generateNetwork()] : updated;
       });
     }, 1500);
   };
 
-  const stopScan = () => {
-    setScanning(false);
-    if (scanInterval.current) {
-      clearInterval(scanInterval.current);
-      scanInterval.current = null;
+  const startRealScan = async () => {
+    stopScan();
+    setNetworks(() => []);
+    setScannerError('');
+    setRealScanning(true);
+    setScanning(true);
+    const poll = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:8765/api/scan', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Local scanner returned HTTP ${response.status}`);
+        const payload = await response.json() as { networks: Array<{ ssid: string; bssid: string; signal: number; channel: number; frequency: '2.4' | '5'; security: WiFiNetwork['security']; vendor?: string }>; scanned_at: string };
+        setNetworks(() => payload.networks.map(n => ({
+          id: n.bssid || n.ssid,
+          ssid: n.ssid || '(Hidden network)',
+          bssid: n.bssid,
+          signal: n.signal,
+          channel: n.channel,
+          frequency: n.frequency,
+          security: n.security,
+          vendor: n.vendor || 'Unknown',
+          clients: 0,
+        })));
+        setLastRealScan(new Date(payload.scanned_at).toLocaleTimeString());
+        setScannerError('');
+      } catch (error) {
+        setScannerError(error instanceof Error ? error.message : 'Could not reach the local scanner. Start local_scanner.py on this PC.');
+        stopScan();
+      }
+    };
+    await poll();
+    if (realScanning || scanInterval.current === null) {
+      // Polling continues only while this real-scan session remains active.
+      scanInterval.current = window.setInterval(poll, 5000);
     }
   };
 
@@ -646,13 +681,21 @@ function WiFiScanner({ networks, setNetworks, scanning, setScanning }: {
             <div className="flex items-center gap-3">
               <div className={`w-2.5 h-2.5 rounded-full ${scanning ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`} />
               <span className="text-sm font-mono text-gray-300">
-                {scanning ? 'Scanning...' : networks.length > 0 ? 'Scan complete' : 'Idle'}
+                {realScanning ? 'Live local scan' : scanning ? 'Demo scanning...' : networks.length > 0 ? 'Scan complete' : 'Idle'}
               </span>
               <span className="text-xs text-gray-500 font-mono">· {networks.length} networks</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
-                onClick={scanning ? stopScan : startScan}
+                onClick={realScanning ? stopScan : startRealScan}
+                className="px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 hover:bg-cyan-500/20"
+                title="Scan nearby Wi-Fi networks using the local Windows scanner service"
+              >
+                <div className="w-4 h-4"><Icons.Radar /></div>
+                {realScanning ? 'Stop Real Scan' : 'Real Scan'}
+              </button>
+              <button
+                onClick={scanning && !realScanning ? stopScan : startScan}
                 className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 ${
                   scanning
                     ? 'bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20'
@@ -815,6 +858,15 @@ function WiFiScanner({ networks, setNetworks, scanning, setScanning }: {
           </div>
         </motion.div>
 
+        {scannerError && (
+          <div className="mt-4 p-4 rounded-xl bg-red-500/5 border border-red-500/20 text-sm text-red-200">
+            <strong>Local scanner unavailable:</strong> {scannerError}
+            <div className="mt-1 text-xs text-red-200/70">On the computer running this browser, start the included local_scanner.py service, then select Real Scan again.</div>
+          </div>
+        )}
+        {realScanning && lastRealScan && (
+          <div className="mt-3 text-xs font-mono text-cyan-300/80">Real adapter scan · Last refreshed {lastRealScan} · refreshes every 5 seconds</div>
+        )}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -823,7 +875,7 @@ function WiFiScanner({ networks, setNetworks, scanning, setScanning }: {
         >
           <div className="w-4 h-4 text-cyan-400 flex-shrink-0 mt-0.5"><Icons.Radar /></div>
           <div className="text-xs text-cyan-200/80">
-            <span className="font-semibold text-cyan-300">Demo mode:</span> This interactive preview simulates the real scanner. In the actual Airgorah application, network discovery is performed via the privileged daemon using monitor-mode capable adapters.
+            <span className="font-semibold text-cyan-300">Real Scan:</span> reads nearby Wi-Fi beacon information through your computer's own wireless adapter using Windows' built-in scan command. It does not connect to networks, transmit packets, disconnect devices, or collect credentials. Use Demo Scan when the local helper is not running.
           </div>
         </motion.div>
       </div>
