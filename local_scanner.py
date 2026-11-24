@@ -99,7 +99,7 @@ def scan_networks():
     return networks
 
 class Handler(BaseHTTPRequestHandler):
-    def headers(self):
+    def add_cors_headers(self):
         origin = self.headers.get("Origin", "")
         if origin in ALLOWED_ORIGINS:
             self.send_header("Access-Control-Allow-Origin", origin)
@@ -114,13 +114,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.headers()
+        self.add_cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.headers()
+        self.add_cors_headers()
         self.end_headers()
 
     def do_GET(self):
