@@ -294,6 +294,68 @@ class Handler(BaseHTTPRequestHandler):
         return profiles
 
 
+    def analyze_saved_capture(self, length):
+        """Summarize EAPOL frames in a completed local capture; never extract payloads."""
+        if length < 1 or length > 4096:
+            self.send_json(400, {"error": "Invalid capture analysis request."})
+            return
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        name = payload.get("filename") if isinstance(payload, dict) else None
+        if not isinstance(name, str) or not re.fullmatch(r"airgorah_capture_[0-9]{8}_[0-9]{6}_[0-9]{6}\\.pcapng", name):
+            self.send_json(400, {"error": "Choose a completed Airgorah capture file."})
+            return
+        path = os.path.join(CAPTURE_DIR, name)
+        if not os.path.isfile(path):
+            self.send_json(404, {"error": "Capture file not found. Stop the capture before analyzing it."})
+            return
+        tshark = shutil.which("tshark")
+        if not tshark:
+            candidates = [
+                os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"), "Wireshark", "tshark.exe"),
+                os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"), "Wireshark", "tshark.exe"),
+            ]
+            tshark = next((item for item in candidates if os.path.isfile(item)), None)
+        if not tshark:
+            self.send_json(503, {"error": "Wireshark tshark was not found. Install Wireshark with the command-line tools option."})
+            return
+        try:
+            result = subprocess.run(
+                [tshark, "-r", path, "-Y", "eapol", "-T", "fields",
+                 "-e", "frame.number", "-e", "wlan.sa", "-e", "wlan.da", "-e", "eapol.type"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except subprocess.TimeoutExpired:
+            self.send_json(504, {"error": "Capture analysis timed out. Try a smaller capture."})
+            return
+        if result.returncode != 0:
+            detail = (result.stderr or "Wireshark could not parse this capture.").strip()
+            self.send_json(422, {"error": detail[-400:]})
+            return
+        frames = []
+        key_frames = 0
+        for line in result.stdout.splitlines():
+            fields = line.split("\\t")
+            fields += [""] * (4 - len(fields))
+            frame_number, source, destination, eapol_type = fields[:4]
+            if eapol_type.strip() == "3":
+                key_frames += 1
+            if len(frames) < 200:
+                frames.append({
+                    "frame": frame_number,
+                    "source": source or "Not exposed by this link type",
+                    "destination": destination or "Not exposed by this link type",
+                    "eapol_type": eapol_type or "Unknown",
+                })
+        self.send_json(200, {
+            "filename": name,
+            "eapol_frames": len(result.stdout.splitlines()),
+            "eapol_key_frames": key_frames,
+            "frames": frames,
+            "truncated": len(result.stdout.splitlines()) > 200,
+            "message": "EAPOL frame summary only. Key frames are not proof of a complete four-way handshake; no packet payloads or passwords were extracted."
+        })
+
     def capture_interfaces(self):
         try:
             self.send_json(200, {"interfaces": list_capture_interfaces()})
@@ -545,6 +607,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(422, {"status": "indeterminate", "message": "Could not verify the candidate. Check the capture format, handshake, target BSSID, and Aircrack-ng installation. " + detail[:200]})
 
     def do_POST(self):
+        if self.path == "/api/capture/analyze":
+            if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
+                self.send_json(403, {"error": "Capture analysis is available only from the local Airgorah app."})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                self.analyze_saved_capture(length)
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                self.send_json(400, {"error": "Invalid JSON analysis request."})
+            except Exception as exc:
+                self.send_json(500, {"error": str(exc)[:350]})
+            return
         if self.path in ("/api/capture/start", "/api/capture/stop"):
             if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
                 self.send_json(403, {"error": "Capture controls are available only from the local Airgorah app."})
