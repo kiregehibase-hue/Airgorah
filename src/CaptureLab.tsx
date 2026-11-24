@@ -22,7 +22,7 @@ export default function CaptureLab() {
   const [status, setStatus] = useState<CaptureStatus>({});
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const [analysis, setAnalysis] = useState<{ eapol_frames: number; eapol_key_frames: number; message?: string; error?: string } | null>(null);
+  const [analysis, setAnalysis] = useState<{ eapol_frames: number; eapol_key_frames: number; deauth_frames?: number; disassoc_frames?: number; beacon_frames?: number; probe_response_frames?: number; management_visibility?: string; message?: string; error?: string } | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [archive, setArchive] = useState<Array<{ filename: string; size_bytes: number; created_at: string }>>([]);
   const [archiveMessage, setArchiveMessage] = useState('');
@@ -84,9 +84,9 @@ export default function CaptureLab() {
         body: JSON.stringify({ filename: status.filename }),
         cache: 'no-store',
       });
-      const data = await response.json() as { eapol_frames?: number; eapol_key_frames?: number; message?: string; error?: string };
+      const data = await response.json() as { eapol_frames?: number; eapol_key_frames?: number; deauth_frames?: number; disassoc_frames?: number; beacon_frames?: number; probe_response_frames?: number; management_visibility?: string; message?: string; error?: string };
       if (!response.ok) throw new Error(data.error || 'Capture analysis failed.');
-      setAnalysis({ eapol_frames: data.eapol_frames || 0, eapol_key_frames: data.eapol_key_frames || 0, message: data.message });
+      setAnalysis({ eapol_frames: data.eapol_frames || 0, eapol_key_frames: data.eapol_key_frames || 0, deauth_frames: data.deauth_frames || 0, disassoc_frames: data.disassoc_frames || 0, beacon_frames: data.beacon_frames || 0, probe_response_frames: data.probe_response_frames || 0, management_visibility: data.management_visibility, message: data.message });
     } catch (error) {
       setAnalysis({ eapol_frames: 0, eapol_key_frames: 0, error: error instanceof Error ? error.message : 'Capture analysis failed.' });
     } finally {
@@ -195,6 +195,13 @@ export default function CaptureLab() {
                       <div><div className="text-xs text-gray-500">EAPOL frames</div><div className="text-xl text-white font-semibold">{analysis.eapol_frames}</div></div>
                       <div><div className="text-xs text-gray-500">EAPOL-Key frames</div><div className="text-xl text-white font-semibold">{analysis.eapol_key_frames}</div></div>
                     </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+                      <div><div className="text-xs text-gray-500">Deauth frames</div><div className="text-lg text-amber-200 font-semibold">{analysis.deauth_frames ?? '—'}</div></div>
+                      <div><div className="text-xs text-gray-500">Disassociation</div><div className="text-lg text-amber-200 font-semibold">{analysis.disassoc_frames ?? '—'}</div></div>
+                      <div><div className="text-xs text-gray-500">Beacons</div><div className="text-lg text-white font-semibold">{analysis.beacon_frames ?? '—'}</div></div>
+                      <div><div className="text-xs text-gray-500">Probe responses</div><div className="text-lg text-white font-semibold">{analysis.probe_response_frames ?? '—'}</div></div>
+                    </div>
+                    {analysis.management_visibility && <p className="mt-3 text-xs text-gray-500">{analysis.management_visibility}</p>}
                     <p className="mt-3 text-xs text-gray-400">{analysis.message}</p>
                   </>}
                 </div>
