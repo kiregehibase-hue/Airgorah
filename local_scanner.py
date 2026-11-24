@@ -394,8 +394,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
                                         errors="replace", timeout=20,
                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                output = (result.stdout or "") + "
-" + (result.stderr or "")
+                output = (result.stdout or "") + "\n" + (result.stderr or "")
                 if result.returncode != 0:
                     detail = output.strip()[-500:]
                     if re.search(r"administrator|elevat|access is denied|requires elevation", detail, re.I):
