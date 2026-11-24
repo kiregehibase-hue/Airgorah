@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PasswordSecurityLab from './PasswordSecurityLab';
+import CaptureLab from './CaptureLab';
 
 // ============ ICONS ============
 const Icons = {
@@ -190,6 +191,7 @@ function Navigation() {
   const links = [
     { label: 'Features', href: '#features' },
     { label: 'Scanner', href: '#scanner' },
+    { label: 'Packet Capture', href: '#capture' },
     { label: 'Attack Lab', href: '#attack' },
     { label: 'Password Lab', href: '#password-lab' },
     { label: 'Architecture', href: '#architecture' },
@@ -2117,6 +2119,7 @@ export default function App() {
           scanning={scanning}
           setScanning={setScanning}
         />
+        <CaptureLab />
         <AttackLab networks={networks} />
         <PasswordSecurityLab />
         <Architecture />
