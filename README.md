@@ -1,6 +1,6 @@
 # Airgorah
 
-Airgorah is a React + TypeScript interface for exploring Wi-Fi security concepts. The included scanner and Attack Lab are **local simulations**: they generate demo data and synthetic event logs only. They do not access wireless adapters, transmit management frames, disconnect devices, create rogue access points, capture handshakes, or collect credentials.
+Airgorah is a React + TypeScript interface for exploring Wi-Fi security concepts. The web interface includes a demo scanner and a separate Windows-only local scanner helper for read-only nearby Wi-Fi discovery. The Attack Lab remains a non-transmitting simulation; it does not send disruptive frames, disconnect devices, create rogue access points, capture handshakes, or collect credentials.
 
 ## Requirements
 - Node.js 20.19+ or 22.12+
