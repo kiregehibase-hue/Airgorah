@@ -12,6 +12,11 @@ export default function PasswordSecurityLab() {
   const [loadingProfiles, setLoadingProfiles] = useState(false);
   const [revealing, setRevealing] = useState(false);
   const [testPassword, setTestPassword] = useState('');
+  const [handshakeFile, setHandshakeFile] = useState<File | null>(null);
+  const [handshakeCandidate, setHandshakeCandidate] = useState('');
+  const [handshakeBssid, setHandshakeBssid] = useState('');
+  const [auditStatus, setAuditStatus] = useState('');
+  const [auditBusy, setAuditBusy] = useState(false);
 
   const loadProfiles = async () => {
     setLoadingProfiles(true);
@@ -56,6 +61,28 @@ export default function PasswordSecurityLab() {
     } finally {
       setRevealing(false);
     }
+  };
+
+  const auditHandshake = async () => {
+    if (!handshakeFile || !handshakeCandidate) { setAuditStatus('Choose a capture file and enter one candidate password.'); return; }
+    setAuditBusy(true); setAuditStatus('Checking one candidate locally…');
+    try {
+      const encoded = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('Could not read the capture file.'));
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.readAsDataURL(handshakeFile);
+      });
+      const response = await fetch('http://127.0.0.1:8765/api/handshake-audit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: handshakeFile.name, capture_base64: encoded, candidate: handshakeCandidate, bssid: handshakeBssid.trim() }),
+        cache: 'no-store',
+      });
+      const payload = await response.json() as { status?: string; message?: string; error?: string };
+      if (!response.ok) throw new Error(payload.error || 'HTTP ' + response.status);
+      setAuditStatus(payload.message || payload.status || 'Audit completed.');
+    } catch (error) { setAuditStatus(error instanceof Error ? error.message : 'The local audit could not be completed.'); }
+    finally { setAuditBusy(false); }
   };
 
   const strength = (() => {
@@ -119,6 +146,28 @@ export default function PasswordSecurityLab() {
             </ul>
             <p className="mt-4 text-[11px] text-gray-500">This is a simple local heuristic, not a guarantee of crack time. The entered value is not sent to a server or saved.</p>
           </div>
+        </div>
+
+        <div className="mt-6 rounded-2xl bg-[#0d0d15] border border-cyan-400/15 p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 p-2.5 text-white">🧪</div>
+            <div><h3 className="text-white font-semibold">WPA handshake password auditor</h3><p className="text-xs text-gray-500">One candidate · local Windows helper · no wordlists</p></div>
+          </div>
+          <p className="text-sm text-gray-400 mb-4">Select a genuine capture from your own network and test one password you already know or suspect. Airgorah checks only this candidate; it does not run dictionary or bulk password attempts.</p>
+          <div className="grid md:grid-cols-2 gap-4">
+            <label className="text-xs text-gray-400">Capture file (.cap, .pcap, .pcapng)
+              <input type="file" accept=".cap,.pcap,.pcapng" onChange={e => { setHandshakeFile(e.target.files?.[0] || null); setAuditStatus(''); }} className="mt-2 block w-full text-sm text-gray-300 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-500/15 file:px-3 file:py-2 file:text-cyan-200" />
+            </label>
+            <label className="text-xs text-gray-400">One candidate WPA/WPA2 password
+              <input type="password" autoComplete="off" value={handshakeCandidate} onChange={e => setHandshakeCandidate(e.target.value)} placeholder="Enter one candidate" className="mt-2 w-full rounded-lg bg-black/40 border border-white/10 text-white px-3 py-3 text-sm" />
+            </label>
+            <label className="text-xs text-gray-400 md:col-span-2">Target BSSID (optional, recommended)
+              <input value={handshakeBssid} onChange={e => setHandshakeBssid(e.target.value)} placeholder="AA:BB:CC:DD:EE:FF" className="mt-2 w-full rounded-lg bg-black/40 border border-white/10 text-white px-3 py-3 text-sm" />
+            </label>
+          </div>
+          <button onClick={auditHandshake} disabled={auditBusy || !handshakeFile || !handshakeCandidate} className="mt-4 px-4 py-2.5 rounded-lg bg-cyan-500/15 border border-cyan-400/20 text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50 text-sm font-medium">{auditBusy ? 'Auditing locally…' : 'Check this candidate'}</button>
+          {auditStatus && <p className="mt-4 rounded-lg bg-black/30 p-3 text-sm text-gray-200 break-words" role="status">{auditStatus}</p>}
+          <p className="mt-3 text-[11px] text-gray-500">Requires Aircrack-ng installed and available on PATH on this Windows PC. The uploaded capture and single candidate are processed by the loopback helper in temporary files, then deleted. Only audit networks you own or are authorized to test.</p>
         </div>
       </div>
     </section>
