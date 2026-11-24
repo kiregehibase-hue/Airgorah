@@ -301,7 +301,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
         name = payload.get("filename") if isinstance(payload, dict) else None
-        if not isinstance(name, str) or not re.fullmatch(r"airgorah_capture_[0-9]{8}_[0-9]{6}_[0-9]{6}\\.pcapng", name):
+        if not isinstance(name, str) or not re.fullmatch(r"airgorah_capture_[0-9]{8}_[0-9]{6}_[0-9]{6}\.pcapng", name):
             self.send_json(400, {"error": "Choose a completed Airgorah capture file."})
             return
         path = os.path.join(CAPTURE_DIR, name)
@@ -335,7 +335,7 @@ class Handler(BaseHTTPRequestHandler):
         frames = []
         key_frames = 0
         for line in result.stdout.splitlines():
-            fields = line.split("\\t")
+            fields = line.split("\t")
             fields += [""] * (4 - len(fields))
             frame_number, source, destination, eapol_type = fields[:4]
             if eapol_type.strip() == "3":
@@ -355,6 +355,28 @@ class Handler(BaseHTTPRequestHandler):
             "truncated": len(result.stdout.splitlines()) > 200,
             "message": "EAPOL frame summary only. Key frames are not proof of a complete four-way handshake; no packet payloads or passwords were extracted."
         })
+
+    def list_capture_archive(self):
+        """List only Airgorah-generated PCAPNG files; do not expose arbitrary paths."""
+        try:
+            os.makedirs(CAPTURE_DIR, exist_ok=True)
+            files = []
+            for name in os.listdir(CAPTURE_DIR):
+                if not re.fullmatch(r"airgorah_capture_[0-9]{8}_[0-9]{6}_[0-9]{6}\.pcapng", name):
+                    continue
+                path = os.path.join(CAPTURE_DIR, name)
+                if not os.path.isfile(path):
+                    continue
+                stat = os.stat(path)
+                files.append({
+                    "filename": name,
+                    "size_bytes": stat.st_size,
+                    "created_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                })
+            files.sort(key=lambda item: item["created_at"], reverse=True)
+            self.send_json(200, {"captures": files[:100], "total": len(files)})
+        except OSError as exc:
+            self.send_json(500, {"error": str(exc)[:250]})
 
     def capture_interfaces(self):
         try:
@@ -502,6 +524,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             self.send_json(200, {"ok": True, "service": "Airgorah local Wi-Fi scanner"})
+            return
+        if self.path == "/api/capture/archive":
+            if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
+                self.send_json(403, {"error": "Capture archive is available only from the local Airgorah app."})
+                return
+            self.list_capture_archive()
             return
         if self.path == "/api/capture/interfaces":
             if self.headers.get("Origin", "") not in SAVED_PROFILE_ORIGINS:
