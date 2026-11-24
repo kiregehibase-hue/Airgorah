@@ -23,6 +23,8 @@ export default function CaptureLab() {
   const [busy, setBusy] = useState(false);
   const [analysis, setAnalysis] = useState<{ eapol_frames: number; eapol_key_frames: number; message?: string; error?: string } | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [archive, setArchive] = useState<Array<{ filename: string; size_bytes: number; created_at: string }>>([]);
+  const [archiveMessage, setArchiveMessage] = useState('');
 
   const refresh = useCallback(async () => {
     try {
@@ -56,6 +58,19 @@ export default function CaptureLab() {
     const timer = window.setInterval(() => { void refresh(); }, 2000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  const loadArchive = async () => {
+    setArchiveMessage('Loading saved captures…');
+    try {
+      const response = await fetch(API + '/api/capture/archive', { cache: 'no-store' });
+      const data = await response.json() as { captures?: Array<{ filename: string; size_bytes: number; created_at: string }>; error?: string };
+      if (!response.ok) throw new Error(data.error || 'Could not load capture archive.');
+      setArchive(data.captures || []);
+      setArchiveMessage((data.captures || []).length ? 'Saved local packet captures.' : 'No saved captures yet. Start and stop a capture to create one.');
+    } catch (error) {
+      setArchiveMessage(error instanceof Error ? error.message : 'Could not load capture archive.');
+    }
+  };
 
   const analyzeCapture = async () => {
     if (!status.filename || status.running) return;
@@ -185,6 +200,21 @@ export default function CaptureLab() {
               )}
             </div>
           )}
+          <div className="mt-6 border-t border-white/10 pt-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div><h4 className="text-white font-semibold">Packet capture archive</h4><p className="text-xs text-gray-500">Saved PCAPNG files on this Windows PC · latest 100</p></div>
+              <button onClick={loadArchive} className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-200 text-xs hover:bg-white/10">Refresh archive</button>
+            </div>
+            {archiveMessage && <p className="mt-3 text-xs text-gray-400" role="status">{archiveMessage}</p>}
+            {archive.length > 0 && <div className="mt-3 space-y-2">
+              {archive.map(item => (
+                <div key={item.filename} className="rounded-lg bg-black/30 border border-white/5 p-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0"><code className="text-xs text-gray-200 break-all">{item.filename}</code><p className="mt-1 text-[11px] text-gray-500">{new Date(item.created_at).toLocaleString()} · {(item.size_bytes / (1024 * 1024)).toFixed(2)} MB</p></div>
+                  <a href={API + '/api/capture/download?name=' + encodeURIComponent(item.filename)} className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-400/20 text-emerald-200 text-xs">Download</a>
+                </div>
+              ))}
+            </div>}
+          </div>
           {message && <p className="mt-4 text-sm text-gray-300 break-words" role="status">{message}</p>}
           {status.error && <p className="mt-4 text-sm text-amber-200 break-words" role="alert">{status.error}</p>}
           <p className="mt-4 text-[11px] text-gray-500">Requires Npcap and Wireshark's dumpcap utility. Captures automatically stop at 100 MB or one hour and are saved in the local <code>captures</code> folder. The hosted GitHub Pages site cannot access this local service; run Airgorah locally on the same PC.</p>
