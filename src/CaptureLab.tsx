@@ -146,7 +146,7 @@ export default function CaptureLab() {
           )}
           {message && <p className="mt-4 text-sm text-gray-300 break-words" role="status">{message}</p>}
           {status.error && <p className="mt-4 text-sm text-amber-200 break-words" role="alert">{status.error}</p>}
-          <p className="mt-4 text-[11px] text-gray-500">Requires Npcap and Wireshark's dumpcap utility. Captures are saved in the local <code>captures</code> folder. The hosted GitHub Pages site cannot access this local service; run Airgorah locally on the same PC.</p>
+          <p className="mt-4 text-[11px] text-gray-500">Requires Npcap and Wireshark's dumpcap utility. Captures automatically stop at 100 MB or one hour and are saved in the local <code>captures</code> folder. The hosted GitHub Pages site cannot access this local service; run Airgorah locally on the same PC.</p>
         </div>
       </div>
     </section>
