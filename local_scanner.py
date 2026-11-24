@@ -39,9 +39,17 @@ CAPTURE_LOCK = threading.Lock()
 CAPTURE_STATE = {
     "process": None, "log_handle": None, "started_at": None,
     "file_path": None, "filename": None, "interface_name": None,
-    "packet_count": None, "elapsed_seconds": 0,
+    "packet_count": None, "elapsed_seconds": 0, "engine": None, "running": False, "etl_path": None,
 }
 CAPTURE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "captures")
+
+def find_pktmon():
+    """Locate Windows' built-in Packet Monitor; no Npcap or Wireshark required."""
+    executable = shutil.which("pktmon")
+    if executable:
+        return executable
+    candidate = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "pktmon.exe")
+    return candidate if os.path.isfile(candidate) else None
 
 def find_dumpcap():
     """Find Wireshark's legitimate passive capture utility."""
@@ -55,25 +63,10 @@ def find_dumpcap():
     return next((path for path in candidates if os.path.isfile(path)), None)
 
 def list_capture_interfaces():
-    dumpcap = find_dumpcap()
-    if not dumpcap:
-        raise RuntimeError("Wireshark dumpcap was not found. Install Wireshark and Npcap, then restart Airgorah.")
-    result = subprocess.run(
-        [dumpcap, "-D"], capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=15,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "Could not enumerate capture interfaces.").strip()
-        raise RuntimeError(detail[:350])
-    interfaces = []
-    for line in result.stdout.splitlines():
-        match = re.match(r"^\s*(\d+)\.\s+(.+?)\s*$", line)
-        if match:
-            interfaces.append({"id": match.group(1), "name": match.group(2)})
-    if not interfaces:
-        raise RuntimeError("No capture interfaces were found. Check that Npcap is installed and an adapter is enabled.")
-    return interfaces
+    """Expose Windows Packet Monitor's physical-NIC capture scope."""
+    if not find_pktmon():
+        raise RuntimeError("Windows pktmon was not found. This built-in engine requires supported Windows 10/11.")
+    return [{"id": "all", "name": "All physical network adapters (Windows Packet Monitor)"}]
 
 def _capture_packet_count(log_path):
     try:
@@ -85,36 +78,19 @@ def _capture_packet_count(log_path):
         return None
 
 def _capture_snapshot_locked():
-    process = CAPTURE_STATE["process"]
-    started = CAPTURE_STATE["started_at"]
-    running = process is not None and process.poll() is None
-    if process is not None and not running:
-        log_handle = CAPTURE_STATE.get("log_handle")
-        if log_handle:
-            try:
-                log_handle.flush()
-                log_handle.close()
-            except OSError:
-                pass
-        log_path = CAPTURE_STATE.get("log_path")
-        CAPTURE_STATE["packet_count"] = _capture_packet_count(log_path) if log_path else None
-        if log_path:
-            try:
-                os.remove(log_path)
-            except OSError:
-                pass
-        CAPTURE_STATE["process"] = None
-        CAPTURE_STATE["log_handle"] = None
-        CAPTURE_STATE["log_path"] = None
-    elapsed = max(0, int(time.time() - started)) if started else CAPTURE_STATE.get("elapsed_seconds", 0)
+    started = CAPTURE_STATE.get("started_at")
+    running = bool(CAPTURE_STATE.get("running"))
+    elapsed = max(0, int(time.time() - started)) if started and running else CAPTURE_STATE.get("elapsed_seconds", 0)
     CAPTURE_STATE["elapsed_seconds"] = elapsed
     file_path = CAPTURE_STATE.get("file_path")
+    size_path = CAPTURE_STATE.get("etl_path") if running else file_path
     try:
-        file_bytes = os.path.getsize(file_path) if file_path and os.path.isfile(file_path) else 0
+        file_bytes = os.path.getsize(size_path) if size_path and os.path.isfile(size_path) else 0
     except OSError:
         file_bytes = 0
     return {
-        "available": bool(find_dumpcap()),
+        "available": bool(find_pktmon()),
+        "engine": "Windows Packet Monitor (pktmon)",
         "running": running,
         "interface_name": CAPTURE_STATE.get("interface_name"),
         "filename": CAPTURE_STATE.get("filename"),
@@ -385,14 +361,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(503, {"error": str(exc)})
 
     def capture_status(self):
-        try:
-            with CAPTURE_LOCK:
-                payload = _capture_snapshot_locked()
-            if not payload["available"]:
-                payload["error"] = "Wireshark dumpcap was not found. Install Wireshark and Npcap on this PC."
-            self.send_json(200, payload)
-        except Exception as exc:
-            self.send_json(500, {"error": str(exc)})
+        payload = _capture_snapshot_locked()
+        if not payload["available"]:
+            payload["error"] = "Windows pktmon was not found. This feature requires supported Windows 10/11."
+        self.send_json(200, payload)
 
     def start_capture(self):
         try:
@@ -401,66 +373,44 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": "Invalid capture start request."})
                 return
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            interface_id = payload.get("interface_id") if isinstance(payload, dict) else None
-            if not isinstance(interface_id, str) or not re.fullmatch(r"\d{1,3}", interface_id):
-                self.send_json(400, {"error": "Select a valid capture interface."})
+            if not isinstance(payload, dict) or payload.get("interface_id") != "all":
+                self.send_json(400, {"error": "Select the Windows Packet Monitor adapter scope."})
                 return
-            interfaces = list_capture_interfaces()
-            selected = next((item for item in interfaces if item["id"] == interface_id), None)
-            if not selected:
-                self.send_json(400, {"error": "That interface is no longer available. Refresh the interface list."})
+            pktmon = find_pktmon()
+            if not pktmon:
+                self.send_json(503, {"error": "Windows pktmon is unavailable."})
                 return
             with CAPTURE_LOCK:
-                _capture_snapshot_locked()
-                current = CAPTURE_STATE.get("process")
-                if current is not None and current.poll() is None:
-                    self.send_json(409, {"error": "A packet capture is already running. Stop it before starting another."})
+                if CAPTURE_STATE.get("running"):
+                    self.send_json(409, {"error": "A packet capture is already running. Stop it first."})
                     return
                 os.makedirs(CAPTURE_DIR, exist_ok=True)
                 stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 filename = "airgorah_capture_" + stamp + ".pcapng"
                 file_path = os.path.join(CAPTURE_DIR, filename)
-                log_path = os.path.join(CAPTURE_DIR, filename + ".log")
-                dumpcap = find_dumpcap()
-                if not dumpcap:
-                    self.send_json(503, {"error": "Wireshark dumpcap was not found. Install Wireshark and Npcap."})
+                etl_path = os.path.join(CAPTURE_DIR, "airgorah_capture_" + stamp + ".etl")
+                command = [pktmon, "start", "--capture", "--comp", "nics", "--pkt-size", "0",
+                           "--file-name", etl_path, "--file-size", "100", "--log-mode", "circular"]
+                result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
+                                        errors="replace", timeout=20,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                output = (result.stdout or "") + "
+" + (result.stderr or "")
+                if result.returncode != 0:
+                    detail = output.strip()[-500:]
+                    if re.search(r"administrator|elevat|access is denied|requires elevation", detail, re.I):
+                        detail = "Windows requires administrator permission. Close Airgorah, run start-local.bat as administrator, and approve the UAC prompt. " + detail
+                    self.send_json(503, {"error": "Windows Packet Monitor could not start. " + detail})
                     return
-                log_handle = open(log_path, "w+b")
-                flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                try:
-                    process = subprocess.Popen(
-                        [dumpcap, "-i", interface_id, "-w", file_path, "-a", "filesize:102400", "-a", "duration:3600"],
-                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                        stderr=log_handle, creationflags=flags,
-                    )
-                    time.sleep(0.4)
-                    if process.poll() is not None:
-                        log_handle.flush()
-                        log_handle.close()
-                        detail = ""
-                        try:
-                            with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
-                                detail = handle.read()[-500:]
-                        except OSError:
-                            pass
-                        try:
-                            os.remove(log_path)
-                        except OSError:
-                            pass
-                        self.send_json(503, {"error": "Capture process could not start. " + detail.strip()})
-                        return
-                except Exception:
-                    log_handle.close()
-                    raise
                 CAPTURE_STATE.update({
-                    "process": process, "log_handle": log_handle, "log_path": log_path,
-                    "started_at": time.time(), "file_path": file_path,
-                    "filename": filename, "interface_name": selected["name"],
-                    "packet_count": None, "elapsed_seconds": 0,
+                    "process": None, "log_handle": None, "log_path": None,
+                    "started_at": time.time(), "file_path": file_path, "etl_path": etl_path,
+                    "filename": filename, "interface_name": "All physical network adapters",
+                    "packet_count": None, "elapsed_seconds": 0, "engine": "pktmon", "running": True,
                 })
-                result = _capture_snapshot_locked()
-            result["message"] = "Passive capture started on " + selected["name"] + "."
-            self.send_json(200, result)
+                result_payload = _capture_snapshot_locked()
+            result_payload["message"] = "Airgorah's built-in Windows Packet Monitor started. Capturing packets visible at Windows network adapters."
+            self.send_json(200, result_payload)
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
             self.send_json(400, {"error": "Invalid JSON capture request."})
         except Exception as exc:
@@ -469,27 +419,52 @@ class Handler(BaseHTTPRequestHandler):
     def stop_capture(self):
         try:
             with CAPTURE_LOCK:
-                process = CAPTURE_STATE.get("process")
-                if process is None:
-                    result = _capture_snapshot_locked()
-                    result["message"] = "No capture is currently running."
-                    self.send_json(200, result)
+                if not CAPTURE_STATE.get("running"):
+                    result_payload = _capture_snapshot_locked()
+                    result_payload["message"] = "No capture is currently running."
+                    self.send_json(200, result_payload)
                     return
-                if process.poll() is None:
+                pktmon = find_pktmon()
+                etl_path = CAPTURE_STATE.get("etl_path")
+                file_path = CAPTURE_STATE.get("file_path")
+                stopped = subprocess.run([pktmon, "stop"], capture_output=True, text=True,
+                                          encoding="utf-8", errors="replace", timeout=30,
+                                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if stopped.returncode != 0:
+                    detail = ((stopped.stderr or "") + " " + (stopped.stdout or "")).strip()[-400:]
+                    self.send_json(500, {"error": "Windows Packet Monitor could not stop cleanly. " + detail})
+                    return
+                CAPTURE_STATE["running"] = False
+                CAPTURE_STATE["elapsed_seconds"] = max(0, int(time.time() - (CAPTURE_STATE.get("started_at") or time.time())))
+                if not etl_path or not os.path.isfile(etl_path):
+                    self.send_json(500, {"error": "Packet Monitor stopped but its ETL file was not found."})
+                    return
+                converted = subprocess.run([pktmon, "etl2pcap", etl_path, "--out", file_path],
+                                           capture_output=True, text=True, encoding="utf-8",
+                                           errors="replace", timeout=120,
+                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if converted.returncode != 0 or not os.path.isfile(file_path):
+                    detail = ((converted.stderr or "") + " " + (converted.stdout or "")).strip()[-400:]
+                    self.send_json(500, {"error": "Capture stopped, but PCAPNG conversion failed. Original ETL retained at " + str(etl_path) + ". " + detail})
+                    return
+                try:
+                    os.remove(etl_path)
+                except OSError:
+                    pass
+                tshark = shutil.which("tshark")
+                if tshark:
                     try:
-                        process.send_signal(signal.CTRL_BREAK_EVENT)
-                        process.wait(timeout=8)
+                        info = subprocess.run([tshark, "-r", file_path, "-T", "fields", "-e", "frame.number"],
+                                              capture_output=True, text=True, encoding="utf-8",
+                                              errors="replace", timeout=30,
+                                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                        if info.returncode == 0:
+                            CAPTURE_STATE["packet_count"] = len([line for line in info.stdout.splitlines() if line.strip()])
                     except Exception:
-                        if process.poll() is None:
-                            process.terminate()
-                            try:
-                                process.wait(timeout=5)
-                            except subprocess.TimeoutExpired:
-                                process.kill()
-                                process.wait(timeout=3)
-                result = _capture_snapshot_locked()
-                result["message"] = "Capture stopped. The PCAPNG file is saved locally."
-            self.send_json(200, result)
+                        pass
+                result_payload = _capture_snapshot_locked()
+                result_payload["message"] = "Capture stopped and saved as PCAPNG by Airgorah's built-in Windows Packet Monitor engine."
+            self.send_json(200, result_payload)
         except Exception as exc:
             self.send_json(500, {"error": str(exc)[:350]})
 
