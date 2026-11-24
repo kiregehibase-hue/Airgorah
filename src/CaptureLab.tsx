@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 type CaptureInterface = { id: string; name: string };
 type CaptureStatus = {
   available?: boolean;
+  engine?: string;
   running?: boolean;
   interface_name?: string;
   filename?: string;
@@ -45,7 +46,7 @@ export default function CaptureLab() {
       if (!response.ok) throw new Error(data.error || 'Could not list capture interfaces.');
       setInterfaces(data.interfaces || []);
       setSelected(current => current || data.interfaces?.[0]?.id || '');
-      setMessage(data.interfaces?.length ? 'Capture interfaces loaded. Select only an interface you own or are authorized to monitor.' : 'No capture interfaces were reported.');
+      setMessage(data.interfaces?.length ? 'Windows Packet Monitor is ready. Capture only on devices and networks you are authorized to monitor.' : 'No capture interfaces were reported.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not reach the local capture service.');
     } finally {
@@ -135,16 +136,16 @@ export default function CaptureLab() {
     <section id="capture" className="py-24 px-6">
       <div className="max-w-7xl mx-auto">
         <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-12">
-          <div className="inline-block text-xs font-mono uppercase tracking-widest text-cyan-400 mb-3">Npcap · dumpcap · local Windows helper</div>
+          <div className="inline-block text-xs font-mono uppercase tracking-widest text-cyan-400 mb-3">Built-in Windows Packet Monitor · no Npcap required</div>
           <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Passive Packet Capture</h2>
-          <p className="text-gray-400 max-w-2xl mx-auto">Capture packets visible to a selected network interface and save a genuine PCAPNG file on this Windows computer. No packet injection or network disruption.</p>
+          <p className="text-gray-400 max-w-2xl mx-auto">Capture packets visible at Windows network adapters using the built-in Packet Monitor. Save PCAPNG files locally without Npcap or Wireshark. No packet injection or network disruption.</p>
         </motion.div>
 
         <div className="rounded-2xl bg-[#0d0d15] border border-cyan-400/15 p-6">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 p-2.5 text-white">◉</div>
-              <div><h3 className="text-white font-semibold">Local capture engine</h3><p className="text-xs text-gray-500">Npcap + Wireshark dumpcap · loopback API only</p></div>
+              <div><h3 className="text-white font-semibold">Local capture engine</h3><p className="text-xs text-gray-500">Windows pktmon · loopback API only</p></div>
             </div>
             <span className={'text-xs px-3 py-1.5 rounded-full border ' + (status.running ? 'bg-red-500/10 border-red-400/30 text-red-300' : 'bg-white/5 border-white/10 text-gray-400')}>
               {status.running ? '● CAPTURING' : '○ STOPPED'}
@@ -152,13 +153,13 @@ export default function CaptureLab() {
           </div>
 
           <div className="p-4 rounded-xl bg-yellow-500/5 border border-yellow-500/20 text-xs text-yellow-100/80 mb-5">
-            Capture only your own device traffic or networks for which you have explicit authorization. Packet files can contain private metadata or content. Airgorah does not decode credentials or inspect packet payloads.
+            Capture only on your own device or networks you are authorized to monitor. Packet files may contain private metadata or content. This engine captures at Windows network adapters; it does not provide Wi-Fi monitor mode or collect nearby devices' over-the-air traffic.
           </div>
 
           <div className="grid md:grid-cols-[1fr_auto_auto] gap-3 items-end">
-            <label className="text-xs text-gray-400">Network interface
+            <label className="text-xs text-gray-400">Capture scope
               <select value={selected} disabled={status.running || busy} onChange={e => setSelected(e.target.value)} className="mt-2 w-full rounded-lg bg-black/40 border border-white/10 text-white px-3 py-3 text-sm">
-                {interfaces.length === 0 && <option value="">Load interfaces first</option>}
+                {interfaces.length === 0 && <option value="">Detect Windows Packet Monitor</option>}
                 {interfaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </label>
@@ -217,7 +218,7 @@ export default function CaptureLab() {
           </div>
           {message && <p className="mt-4 text-sm text-gray-300 break-words" role="status">{message}</p>}
           {status.error && <p className="mt-4 text-sm text-amber-200 break-words" role="alert">{status.error}</p>}
-          <p className="mt-4 text-[11px] text-gray-500">Requires Npcap and Wireshark's dumpcap utility. Captures automatically stop at 100 MB or one hour and are saved in the local <code>captures</code> folder. The hosted GitHub Pages site cannot access this local service; run Airgorah locally on the same PC.</p>
+          <p className="mt-4 text-[11px] text-gray-500">Uses Windows Packet Monitor (pktmon), included with supported Windows 10/11. Npcap and Wireshark are not required for capture. Windows may require administrator permission; if capture is denied, close Airgorah and run start-local.bat as administrator. The ETL buffer is limited to 100 MB in circular mode; stop the capture to convert it to PCAPNG in the local <code>captures</code> folder. This captures traffic visible at the PC's network stack, not 802.11 monitor-mode frames or all traffic from every device. The hosted GitHub Pages site cannot access this local service; run Airgorah locally.</p>
         </div>
       </div>
     </section>
