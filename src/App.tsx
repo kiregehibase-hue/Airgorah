@@ -625,11 +625,8 @@ function WiFiScanner({ networks, setNetworks, scanning, setScanning }: {
         stopScan();
       }
     };
+    scanInterval.current = window.setInterval(poll, 5000);
     await poll();
-    if (realScanning || scanInterval.current === null) {
-      // Polling continues only while this real-scan session remains active.
-      scanInterval.current = window.setInterval(poll, 5000);
-    }
   };
 
   useEffect(() => {
