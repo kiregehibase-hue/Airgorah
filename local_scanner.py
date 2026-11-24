@@ -61,7 +61,7 @@ def request_windows_wifi_scan():
         header = ctypes.cast(listing, ctypes.POINTER(WLAN_INTERFACE_INFO_LIST)).contents
         if header.dwNumberOfItems == 0:
             raise RuntimeError("Windows reports no Wi-Fi adapter. Enable Wi-Fi or connect a wireless adapter.")
-        base = ctypes.addressof(listing.contents) + WLAN_INTERFACE_INFO_LIST.InterfaceInfo.offset
+        base = listing.value + WLAN_INTERFACE_INFO_LIST.InterfaceInfo.offset
         requested = 0
         for index in range(header.dwNumberOfItems):
             item = ctypes.cast(base + index * ctypes.sizeof(WLAN_INTERFACE_INFO), ctypes.POINTER(WLAN_INTERFACE_INFO)).contents
