@@ -189,7 +189,7 @@ class Handler(BaseHTTPRequestHandler):
             raise RuntimeError((result.stderr or result.stdout or "Could not list saved Wi-Fi profiles").strip()[:300])
         profiles = []
         for line in result.stdout.splitlines():
-            match = re.search(r"All User Profile\\s*:\\s*(.*)$", line, re.I)
+            match = re.search(r"All User Profile\s*:\s*(.*)$", line, re.I)
             if match:
                 name = match.group(1).strip()
                 if name and name not in profiles:
@@ -252,7 +252,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             password = None
             for line in result.stdout.splitlines():
-                match = re.search(r"Key Content\\s*:\\s*(.*)$", line, re.I)
+                match = re.search(r"Key Content\s*:\s*(.*)$", line, re.I)
                 if match:
                     password = match.group(1).strip()
                     break
