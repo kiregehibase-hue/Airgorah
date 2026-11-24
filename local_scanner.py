@@ -79,6 +79,9 @@ def request_windows_wifi_scan():
 def scan_networks():
     if sys.platform != "win32":
         raise RuntimeError("This first local scanner helper currently supports Windows 10/11 only.")
+    # Explicitly request a fresh scan before reading Windows' visible networks.
+    # WlanScan is asynchronous; request_windows_wifi_scan waits briefly for results.
+    request_windows_wifi_scan()
     result = subprocess.run(
         ["netsh", "wlan", "show", "networks", "mode=bssid"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
