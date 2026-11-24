@@ -1,6 +1,6 @@
 # Airgorah
 
-Airgorah is a React + TypeScript interface for exploring Wi-Fi security concepts. The web interface includes a demo scanner and a separate Windows-only local scanner helper for read-only nearby Wi-Fi discovery. The Attack Lab remains a non-transmitting simulation; it does not send disruptive frames, disconnect devices, create rogue access points, capture handshakes, or collect credentials.
+Airgorah is a React + TypeScript interface for exploring Wi-Fi security concepts. The web interface includes a demo scanner, a Windows-only local helper for read-only nearby Wi-Fi discovery, and a local password recovery lab for viewing credentials already saved in the current Windows user profile. The Attack Lab remains a non-transmitting simulation; it does not send disruptive frames, disconnect devices, create rogue access points, capture handshakes, or collect credentials.
 
 ## Requirements
 - Node.js 20.19+ or 22.12+
@@ -39,3 +39,18 @@ The local helper uses Windows' built-in `netsh wlan show networks mode=bssid` co
 If Real Scan cannot connect, confirm the terminal says the service is running at `http://127.0.0.1:8765`, then refresh the page. The **Demo Scan** button remains available without the helper.
 
 Privacy and scope: the helper listens only on loopback and allows the Airgorah GitHub Pages origin plus local development origins. It performs read-only nearby Wi-Fi discovery; it does not connect to access points, transmit disruptive frames, disconnect clients, capture credentials, or collect handshakes. This helper currently supports Windows 10/11 only.
+
+## Local Wi-Fi password recovery (Windows 10/11)
+
+The **Password Lab** can list Wi-Fi profiles already saved by Windows for the current user and, after the user selects one and presses **Reveal saved password**, ask Windows to display that profile's stored key. It cannot discover or reveal passwords for nearby networks that have never been saved on this PC.
+
+For this feature, run both the local scanner helper and the web app on the same PC:
+1. Download and extract the repository ZIP.
+2. Double-click `start-local.bat` (or start `local_scanner.py` and the Vite app separately).
+3. Keep both terminal windows open.
+4. Open `http://127.0.0.1:5173` and scroll to **Password Lab**.
+5. Choose **Load saved Wi-Fi profiles**, select one of your saved networks, then choose **Reveal saved password**.
+
+The password endpoint is served only by the loopback helper and accepts requests from the local development origins. Password values are returned only when explicitly requested and are not written to a file or log. The hosted GitHub Pages site cannot access saved Windows profiles; use the local app.
+
+The strength tester runs in the browser and does not send the typed value to the helper. Its score is a simple educational heuristic, not a password-cracking-time estimate.
