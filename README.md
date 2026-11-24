@@ -73,3 +73,10 @@ Airgorah now uses Windows Packet Monitor (`pktmon`), an in-box Windows packet-ca
 The capture buffer is limited to 100 MB in circular mode; it overwrites the oldest buffered data when full. Stop the capture to finalize the PCAPNG file. The local API binds only to `127.0.0.1:8765` and capture controls are restricted to local app origins. GitHub Pages cannot access the local Windows packet-capture service.
 
 **Limitations:** This is Windows network-stack capture, not 802.11 monitor mode. It records packets visible at the selected Windows network-stack capture points; it does not collect nearby devices' over-the-air Wi-Fi frames or guarantee visibility into every device's traffic. It is not a replacement for a monitor-mode adapter, router capture, or managed switch mirror. Captures may contain private network metadata or content; store and share them carefully. Packet count display after conversion requires Wireshark's optional `tshark` command-line utility.
+
+
+## Defensive capture analysis and audit reports
+
+After stopping a local capture, choose **Analyze handshake traffic** in Passive Packet Capture. When Wireshark's `tshark` is installed, Airgorah reports EAPOL metadata and counts visible 802.11 deauthentication, disassociation, beacon, and probe-response frames. This is passive triage only: elevated deauthentication counts are not proof of malicious activity. Windows Packet Monitor commonly captures network-stack/Ethernet frames rather than raw 802.11 management traffic; a zero count can mean those frames were not visible in that file.
+
+The Live Wi-Fi Security Audit highlights repeated SSIDs across multiple BSSIDs as an observation and exports a JSON report. Multiple BSSIDs are normal for mesh and multi-AP deployments; verify them against a trusted access-point inventory before drawing conclusions. No active probing, packet injection, disconnection, rogue AP creation, credential collection, or password cracking is performed.
