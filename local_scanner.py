@@ -79,7 +79,7 @@ def _capture_packet_count(log_path):
     try:
         with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
             output = handle.read()
-        matches = re.findall(r"Packets: captured (\d+)", output, re.I)
+        matches = re.findall(r"(?:Packets captured:|Packets: captured)\s*(\d+)", output, re.I)
         return int(matches[-1]) if matches else None
     except OSError:
         return None
@@ -345,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
                 flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                 try:
                     process = subprocess.Popen(
-                        [dumpcap, "-i", interface_id, "-w", file_path, "-q"],
+                        [dumpcap, "-i", interface_id, "-w", file_path],
                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                         stderr=log_handle, creationflags=flags,
                     )
