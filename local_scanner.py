@@ -268,7 +268,7 @@ class Handler(BaseHTTPRequestHandler):
             with open(capture_path, "wb") as handle:
                 handle.write(capture)
             with open(candidate_path, "w", encoding="utf-8", newline="") as handle:
-                handle.write(candidate + "\\n")
+                handle.write(candidate + "\n")
             command = [aircrack, "-a", "2"]
             if bssid:
                 command.extend(["-b", bssid])
